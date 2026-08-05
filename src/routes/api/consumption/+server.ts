@@ -6,7 +6,11 @@ import {
   ERedesAuthenticationError,
   ERedesConnectionError,
   ERedesError,
+  type ConsumptionData,
 } from "$lib/server/eredes";
+import { getReadingsRange, upsertReadings, type ReadingRow } from "$lib/server/db/readings.js";
+
+const REGISTER = "A+";
 
 function parseDateParam(value: string | null, fallback: Date): Date | null {
   if (!value) return fallback;
@@ -14,6 +18,40 @@ function parseDateParam(value: string | null, fallback: Date): Date | null {
   if (Number.isNaN(d.getTime())) return null;
   d.setHours(0, 0, 0, 0);
   return d;
+}
+
+function toIsoUtc(d: Date): string {
+  return d.toISOString();
+}
+
+function rowToJson(r: ReadingRow) {
+  return {
+    timestamp: r.ts,
+    valueWh: r.valueWh,
+    status: r.status,
+  };
+}
+
+async function fetchAndCache(
+  client: ERedesClient,
+  cpe: string,
+  start: Date,
+  end: Date,
+): Promise<{
+  rows: ReadingRow[];
+  fetched: ConsumptionData;
+}> {
+  const fetched = await client.getConsumption(cpe, start, end);
+  const newRows = fetched.readings.map((r) => ({
+    cpe,
+    register: REGISTER,
+    ts: r.timestamp,
+    valueWh: r.valueWh,
+    status: r.status,
+  }));
+  upsertReadings(newRows);
+  const rows = getReadingsRange(cpe, REGISTER, toIsoUtc(start), toIsoUtc(end));
+  return { rows, fetched };
 }
 
 export const GET: RequestHandler = async ({ url }) => {
@@ -33,14 +71,34 @@ export const GET: RequestHandler = async ({ url }) => {
   if (!start || !end) throw error(400, "Invalid date. Use YYYY-MM-DD.");
   if (start > end) throw error(400, "start must be <= end");
 
-  const client = new ERedesClient(aat);
-  try {
-    const data = await client.getConsumption(cpe, start, end);
-    return json(data);
-  } catch (ex) {
-    if (ex instanceof ERedesAuthenticationError) throw error(401, ex.message);
-    if (ex instanceof ERedesConnectionError) throw error(502, ex.message);
-    if (ex instanceof ERedesError) throw error(502, ex.message);
-    throw ex;
+  const refresh = url.searchParams.get("refresh") === "1";
+  const startIso = toIsoUtc(start);
+  const endIso = toIsoUtc(end);
+
+  let rows = getReadingsRange(cpe, REGISTER, startIso, endIso);
+  let source: "cache" | "api" = "cache";
+
+  if (refresh || rows.length === 0) {
+    try {
+      const client = new ERedesClient(aat);
+      const res = await fetchAndCache(client, cpe, start, end);
+      rows = res.rows;
+      source = "api";
+    } catch (ex) {
+      if (ex instanceof ERedesAuthenticationError) throw error(401, ex.message);
+      if (ex instanceof ERedesConnectionError) throw error(502, ex.message);
+      if (ex instanceof ERedesError) throw error(502, ex.message);
+      throw ex;
+    }
   }
+
+  return json({
+    cpe,
+    register: REGISTER,
+    startDate: startIso,
+    endDate: endIso,
+    source,
+    count: rows.length,
+    readings: rows.map(rowToJson),
+  });
 };

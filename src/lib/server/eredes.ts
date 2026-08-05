@@ -4,6 +4,7 @@ const API_URL = `${BASE_URL}/ms/reading/data-usage/edm/get`;
 export interface ConsumptionReading {
   timestamp: string;
   valueWh: number;
+  status: string;
 }
 
 export interface ConsumptionData {
@@ -21,6 +22,7 @@ interface RawLoadCurve {
   loadCurveTimestamp?: string;
   meterLoadCurve?: number;
   meterLoadCurveUnitMeasurement?: string;
+  meterLoadCurveStatus?: string;
 }
 
 interface RawMeterLoadCurveGroup {
@@ -179,7 +181,8 @@ export class ERedesClient {
           if (!parsed) continue;
           const unit = (curve.meterLoadCurveUnitMeasurement ?? "").toLowerCase();
           const valueWh = unit === "kwh" ? val * 1000 : val;
-          readings.push({ timestamp: parsed.toISOString(), valueWh });
+          const status = curve.meterLoadCurveStatus ?? "unknown";
+          readings.push({ timestamp: parsed.toISOString(), valueWh, status });
         }
       }
     }
