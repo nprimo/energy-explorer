@@ -1,16 +1,10 @@
 import type { RequestHandler } from "./$types";
 import { error, json } from "@sveltejs/kit";
 import { env } from "$env/dynamic/private";
-import {
-  ERedesClient,
-  ERedesAuthenticationError,
-  ERedesConnectionError,
-  ERedesError,
-  type ConsumptionData,
-} from "$lib/server/eredes";
-import { getReadingsRange, upsertReadings, type ReadingRow } from "$lib/server/db/readings.js";
-
-const REGISTER = "A+";
+import { Effect } from "effect";
+import { run } from "$lib/server/runtime";
+import { ConsumptionGateway, type ConsumptionSource } from "$lib/server/consumption";
+import { ERedesAuthenticationError, ERedesConnectionError, ERedesError } from "$lib/server/eredes";
 
 function parseDateParam(value: string | null, fallback: Date): Date | null {
   if (!value) return fallback;
@@ -24,34 +18,12 @@ function toIsoUtc(d: Date): string {
   return d.toISOString();
 }
 
-function rowToJson(r: ReadingRow) {
+function rowToJson(r: { ts: string; valueWh: number; status: string }) {
   return {
     timestamp: r.ts,
     valueWh: r.valueWh,
     status: r.status,
   };
-}
-
-async function fetchAndCache(
-  client: ERedesClient,
-  cpe: string,
-  start: Date,
-  end: Date,
-): Promise<{
-  rows: ReadingRow[];
-  fetched: ConsumptionData;
-}> {
-  const fetched = await client.getConsumption(cpe, start, end);
-  const newRows = fetched.readings.map((r) => ({
-    cpe,
-    register: REGISTER,
-    ts: r.timestamp,
-    valueWh: r.valueWh,
-    status: r.status,
-  }));
-  upsertReadings(newRows);
-  const rows = getReadingsRange(cpe, REGISTER, toIsoUtc(start), toIsoUtc(end));
-  return { rows, fetched };
 }
 
 export const GET: RequestHandler = async ({ url }) => {
@@ -75,30 +47,31 @@ export const GET: RequestHandler = async ({ url }) => {
   const startIso = toIsoUtc(start);
   const endIso = toIsoUtc(end);
 
-  let rows = getReadingsRange(cpe, REGISTER, startIso, endIso);
-  let source: "cache" | "api" = "cache";
-
-  if (refresh || rows.length === 0) {
-    try {
-      const client = new ERedesClient(aat);
-      const res = await fetchAndCache(client, cpe, start, end);
-      rows = res.rows;
-      source = "api";
-    } catch (ex) {
-      if (ex instanceof ERedesAuthenticationError) throw error(401, ex.message);
-      if (ex instanceof ERedesConnectionError) throw error(502, ex.message);
-      if (ex instanceof ERedesError) throw error(502, ex.message);
-      throw ex;
-    }
+  let result: {
+    rows: ReadonlyArray<{ ts: string; valueWh: number; status: string }>;
+    source: ConsumptionSource;
+  };
+  try {
+    result = await run(
+      Effect.gen(function* () {
+        const gateway = yield* ConsumptionGateway;
+        return yield* gateway.get(cpe, start, end, { refresh });
+      }),
+    );
+  } catch (ex) {
+    if (ex instanceof ERedesAuthenticationError) throw error(401, ex.message);
+    if (ex instanceof ERedesConnectionError) throw error(502, ex.message);
+    if (ex instanceof ERedesError) throw error(502, ex.message);
+    throw ex;
   }
 
   return json({
     cpe,
-    register: REGISTER,
+    register: "A+",
     startDate: startIso,
     endDate: endIso,
-    source,
-    count: rows.length,
-    readings: rows.map(rowToJson),
+    source: result.source,
+    count: result.rows.length,
+    readings: result.rows.map(rowToJson),
   });
 };

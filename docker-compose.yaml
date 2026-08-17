@@ -1,0 +1,22 @@
+# Local observability stack for development.
+#
+# Single container bundling OpenTelemetry Collector + Tempo (traces) +
+# Prometheus (metrics) + Loki (logs) + Grafana (UI). Same image the Effect
+# tracing docs use: https://www.effect.website/docs/v4/observability/tracing
+#
+# Usage:
+#   docker compose up -d
+#   # set OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 in .env
+#   # hit the app, then open the Grafana UI.
+#
+# Tear down:
+#   docker compose down
+
+services:
+  otel-lgtm:
+    image: grafana/otel-lgtm:latest
+    ports:
+      # OTLP/HTTP receiver — point OTEL_EXPORTER_OTLP_ENDPOINT at this.
+      - "4318:4318"
+      # Grafana UI (Explore → Tempo for traces, Loki for logs, Prometheus for metrics).
+      - "3000:3000"
