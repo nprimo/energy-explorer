@@ -1,15 +1,20 @@
 import { Effect, Layer, ManagedRuntime } from "effect";
 import { env } from "$env/dynamic/private";
 import { ERedes } from "$lib/server/eredes";
+import { ReadingsRepo } from "$lib/server/readings";
+import { ConsumptionGateway } from "$lib/server/consumption";
 
 // ---------------------------------------------------------------------------
 // ServerLive: the composition of every app service layer.
 //
-// Today it is just ERedes; each migrated service gets `Layer.merge`-ed in here.
+// Today: ERedes + ReadingsRepo + ConsumptionGateway. Each migrated service
+// gets `Layer.merge`-ed in here.
 // ---------------------------------------------------------------------------
-function buildServerLive(): Layer.Layer<ERedes> {
-  const aat = env.EREDES_AAT ?? "";
-  return ERedes.withAccessToken(aat);
+
+function buildServerLive(): Layer.Layer<ConsumptionGateway> {
+  return ConsumptionGateway.Live.pipe(
+    Layer.provide(Layer.merge(ERedes.withAccessToken(env.EREDES_AAT ?? ""), ReadingsRepo.Live)),
+  );
 }
 
 export const ServerLive = buildServerLive();
@@ -30,8 +35,9 @@ export const runtime = ManagedRuntime.make(ServerLive, { memoMap: appMemoMap });
  * Run an Effect program against the server runtime from a non-Effect edge
  * (e.g. a SvelteKit `+server.ts` handler). Returns a Promise.
  */
-export const run: <A, E>(program: Effect.Effect<A, E, ERedes>) => Promise<A> = (program) =>
-  runtime.runPromise(program);
+export const run: <A, E>(program: Effect.Effect<A, E, ConsumptionGateway>) => Promise<A> = (
+  program,
+) => runtime.runPromise(program);
 
 // Release scoped resources on process shutdown.
 const shutdown = () => {
