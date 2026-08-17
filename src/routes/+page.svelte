@@ -1,7 +1,5 @@
 <script lang="ts">
-	import EnergyChart from "$lib/components/EnergyChart.svelte";
+	import MonthlyView from "$lib/components/MonthlyView.svelte";
 </script>
 
-<h1>E-REDES consumption</h1>
-
-<EnergyChart />
+<MonthlyView />
