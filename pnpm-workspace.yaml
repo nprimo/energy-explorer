@@ -1,5 +1,6 @@
 allowBuilds:
   better-sqlite3: true
+  msgpackr-extract: true
 catalog:
   vite: npm:@voidzero-dev/vite-plus-core@0.2.5
   vite-plus: 0.2.5

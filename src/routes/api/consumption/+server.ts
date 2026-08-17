@@ -1,8 +1,10 @@
 import type { RequestHandler } from "./$types";
 import { error, json } from "@sveltejs/kit";
 import { env } from "$env/dynamic/private";
+import { Effect } from "effect";
+import { run } from "$lib/server/runtime";
 import {
-  ERedesClient,
+  ERedes,
   ERedesAuthenticationError,
   ERedesConnectionError,
   ERedesError,
@@ -32,26 +34,29 @@ function rowToJson(r: ReadingRow) {
   };
 }
 
-async function fetchAndCache(
-  client: ERedesClient,
+function fetchAndCache(
   cpe: string,
   start: Date,
   end: Date,
-): Promise<{
-  rows: ReadingRow[];
-  fetched: ConsumptionData;
-}> {
-  const fetched = await client.getConsumption(cpe, start, end);
-  const newRows = fetched.readings.map((r) => ({
-    cpe,
-    register: REGISTER,
-    ts: r.timestamp,
-    valueWh: r.valueWh,
-    status: r.status,
-  }));
-  upsertReadings(newRows);
-  const rows = getReadingsRange(cpe, REGISTER, toIsoUtc(start), toIsoUtc(end));
-  return { rows, fetched };
+): Effect.Effect<
+  { rows: ReadingRow[]; fetched: ConsumptionData },
+  ERedesAuthenticationError | ERedesConnectionError | ERedesError,
+  ERedes
+> {
+  return Effect.gen(function* () {
+    const eredes = yield* ERedes;
+    const fetched = yield* eredes.getConsumption(cpe, start, end);
+    const newRows = fetched.readings.map((r) => ({
+      cpe,
+      register: REGISTER,
+      ts: r.timestamp,
+      valueWh: r.valueWh,
+      status: r.status,
+    }));
+    upsertReadings(newRows);
+    const rows = getReadingsRange(cpe, REGISTER, toIsoUtc(start), toIsoUtc(end));
+    return { rows, fetched };
+  });
 }
 
 export const GET: RequestHandler = async ({ url }) => {
@@ -80,8 +85,11 @@ export const GET: RequestHandler = async ({ url }) => {
 
   if (refresh || rows.length === 0) {
     try {
-      const client = new ERedesClient(aat);
-      const res = await fetchAndCache(client, cpe, start, end);
+      const res = await run(
+        Effect.gen(function* () {
+          return yield* fetchAndCache(cpe, start, end);
+        }),
+      );
       rows = res.rows;
       source = "api";
     } catch (ex) {
