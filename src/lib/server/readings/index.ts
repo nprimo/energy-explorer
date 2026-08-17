@@ -62,7 +62,11 @@ export class ReadingsRepo extends Context.Service<
         Effect.sync(() => {
           const db = getDb();
           return db.prepare(GET_RANGE_SQL).all({ cpe, register, start, end }) as ReadingRow[];
-        }),
+        }).pipe(
+          Effect.withSpan("ReadingsRepo.getRange", {
+            attributes: { cpe, register, start, end },
+          }),
+        ),
 
       upsert: (rows) =>
         Effect.sync(() => {
@@ -86,7 +90,14 @@ export class ReadingsRepo extends Context.Service<
             return n;
           });
           return tx(rows);
-        }),
+        }).pipe(
+          Effect.tap((written) =>
+            Effect.logInfo(`db write: ${rows.length} rows (${written} upserts)`),
+          ),
+          Effect.withSpan("ReadingsRepo.upsert", {
+            attributes: { rows: rows.length },
+          }),
+        ),
 
       daysPresent: (cpe, register, start, end) =>
         Effect.sync(() => {
@@ -95,7 +106,16 @@ export class ReadingsRepo extends Context.Service<
             day: string;
           }[];
           return rows.map((r) => r.day);
-        }),
+        }).pipe(
+          Effect.tap((days) =>
+            Effect.logInfo(
+              `db probe: cpe=${cpe} range=[${start} → ${end}] present=${days.length} days`,
+            ),
+          ),
+          Effect.withSpan("ReadingsRepo.daysPresent", {
+            attributes: { cpe, register, start, end },
+          }),
+        ),
     }),
   );
 }

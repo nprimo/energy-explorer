@@ -52,6 +52,9 @@ export class ConsumptionGateway extends Context.Service<
           Effect.gen(function* () {
             const startIso = start.toISOString();
             const endIso = end.toISOString();
+            yield* Effect.logInfo(
+              `consumption request: cpe=${cpe} range=[${startIso} → ${endIso}] refresh=${options?.refresh === true}`,
+            );
 
             // Determine missing day blocks.
             let missing: ReadonlyArray<{ start: Date; end: Date }>;
@@ -78,8 +81,43 @@ export class ConsumptionGateway extends Context.Service<
             const source: ConsumptionSource =
               missing.length === 0 ? "cache" : hadCache ? "partial" : "api";
 
+            yield* Effect.logInfo(
+              `consumption ok: cpe=${cpe} range=[${startIso} → ${endIso}] source=${source} rows=${rows.length} fetchedDays=${fetchedDays.length}`,
+            );
             return { rows, source, fetchedDays };
-          });
+          }).pipe(
+            Effect.catchTags({
+              ERedesAuthenticationError: (err) =>
+                Effect.gen(function* () {
+                  yield* Effect.logError(
+                    `consumption failed: cpe=${cpe} range=[${start.toISOString()} → ${end.toISOString()}] ${err._tag}: ${err.message}`,
+                  );
+                  return yield* Effect.fail(err);
+                }),
+              ERedesConnectionError: (err) =>
+                Effect.gen(function* () {
+                  yield* Effect.logError(
+                    `consumption failed: cpe=${cpe} range=[${start.toISOString()} → ${end.toISOString()}] ${err._tag}: ${err.message}`,
+                  );
+                  return yield* Effect.fail(err);
+                }),
+              ERedesError: (err) =>
+                Effect.gen(function* () {
+                  yield* Effect.logError(
+                    `consumption failed: cpe=${cpe} range=[${start.toISOString()} → ${end.toISOString()}] ${err._tag}: ${err.message}`,
+                  );
+                  return yield* Effect.fail(err);
+                }),
+            }),
+            Effect.withSpan("ConsumptionGateway.get", {
+              attributes: {
+                cpe,
+                start: start.toISOString(),
+                end: end.toISOString(),
+                refresh: options?.refresh === true,
+              },
+            }),
+          );
 
         return ConsumptionGateway.of({ get });
       }),

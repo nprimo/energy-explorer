@@ -266,6 +266,10 @@ export class ERedes extends Context.Service<
           endDate: Date,
         ): Effect.Effect<ConsumptionData, ERedesServiceError> =>
           Effect.gen(function* () {
+            const startIso = startDate.toISOString();
+            const endIso = endDate.toISOString();
+            yield* Effect.logInfo(`e-redes fetch: cpe=${cpe} range=[${startIso} → ${endIso}]`);
+
             const payload = {
               cpe,
               request_type: "3",
@@ -286,7 +290,7 @@ export class ERedes extends Context.Service<
               .execute(request)
               .pipe(Effect.mapError((error) => toDomainError(error)));
 
-            return yield* HttpClientResponse.matchStatus(response, {
+            const result = yield* HttpClientResponse.matchStatus(response, {
               "2xx": () =>
                 Effect.gen(function* () {
                   const body = yield* response.json.pipe(
@@ -326,7 +330,43 @@ export class ERedes extends Context.Service<
                   }),
                 ),
             });
-          });
+
+            yield* Effect.logInfo(
+              `e-redes fetch ok: cpe=${cpe} range=[${startIso} → ${endIso}] n=${result.readings.length}`,
+            );
+            return result;
+          }).pipe(
+            Effect.catchTags({
+              ERedesAuthenticationError: (err) =>
+                Effect.gen(function* () {
+                  yield* Effect.logError(
+                    `e-redes fetch failed: cpe=${cpe} range=[${startDate.toISOString()} → ${endDate.toISOString()}] ${err._tag}: ${err.message}`,
+                  );
+                  return yield* Effect.fail(err);
+                }),
+              ERedesConnectionError: (err) =>
+                Effect.gen(function* () {
+                  yield* Effect.logError(
+                    `e-redes fetch failed: cpe=${cpe} range=[${startDate.toISOString()} → ${endDate.toISOString()}] ${err._tag}: ${err.message}`,
+                  );
+                  return yield* Effect.fail(err);
+                }),
+              ERedesError: (err) =>
+                Effect.gen(function* () {
+                  yield* Effect.logError(
+                    `e-redes fetch failed: cpe=${cpe} range=[${startDate.toISOString()} → ${endDate.toISOString()}] ${err._tag}: ${err.message}`,
+                  );
+                  return yield* Effect.fail(err);
+                }),
+            }),
+            Effect.withSpan("ERedes.getConsumption", {
+              attributes: {
+                cpe,
+                start: startDate.toISOString(),
+                end: endDate.toISOString(),
+              },
+            }),
+          );
 
         return ERedes.of({ getConsumption });
       }),

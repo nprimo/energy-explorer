@@ -1,20 +1,47 @@
 import { Effect, Layer, ManagedRuntime } from "effect";
+import { FetchHttpClient } from "effect/unstable/http";
+import { Otlp } from "effect/unstable/observability";
 import { env } from "$env/dynamic/private";
 import { ERedes } from "$lib/server/eredes";
 import { ReadingsRepo } from "$lib/server/readings";
 import { ConsumptionGateway } from "$lib/server/consumption";
 
 // ---------------------------------------------------------------------------
+// Observability (optional)
+//
+// When `OTEL_EXPORTER_OTLP_ENDPOINT` is set, spans + logs are exported via
+// OTLP/HTTP to that base URL (dev: http://localhost:4318 → Grafana; prod: your
+// collector/vendor). When unset, no exporter is wired and spans are dropped —
+// the runtime behaves exactly as before.
+// ---------------------------------------------------------------------------
+
+const SERVICE_NAME = "energy-explore";
+
+function buildObservabilityLayer(): Layer.Layer<never> | null {
+  const endpoint = env.OTEL_EXPORTER_OTLP_ENDPOINT ?? "http://localhost:4318";
+  if (!endpoint) return null;
+  return Otlp.layerJson({
+    baseUrl: endpoint,
+    resource: { serviceName: SERVICE_NAME },
+  }).pipe(Layer.provide(FetchHttpClient.layer));
+}
+
+const ObservabilityLayer = buildObservabilityLayer();
+
+// ---------------------------------------------------------------------------
 // ServerLive: the composition of every app service layer.
 //
 // Today: ERedes + ReadingsRepo + ConsumptionGateway. Each migrated service
-// gets `Layer.merge`-ed in here.
+// gets `Layer.merge`-ed in here. The observability layer is merged in when
+// configured (it provides `never` — it installs global tracer/logger exporters
+// as a side effect).
 // ---------------------------------------------------------------------------
 
 function buildServerLive(): Layer.Layer<ConsumptionGateway> {
-  return ConsumptionGateway.Live.pipe(
+  const services = ConsumptionGateway.Live.pipe(
     Layer.provide(Layer.merge(ERedes.withAccessToken(env.EREDES_AAT ?? ""), ReadingsRepo.Live)),
   );
+  return ObservabilityLayer ? Layer.merge(services, ObservabilityLayer) : services;
 }
 
 export const ServerLive = buildServerLive();
