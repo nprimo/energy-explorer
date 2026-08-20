@@ -53,5 +53,8 @@ Dump possible next todos and ideas to improve the page
     that's not possible, return an error (invalid shape), instead of using
     `uknownEffect` + all the functions to transform things?
 
-- project or WorkOS - https://workos.com/docs/authkit
-- explore minimum effort to get authentication + invite only
+- project or WorkOS, [AuthKit](https://workos.com/docs/authkit)
+  - explore minimum effort to get authentication + invite only
+
+- have live update
+  - implement pubsub logics to update view when data gets updated
