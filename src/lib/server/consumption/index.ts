@@ -7,6 +7,7 @@ import { NewReading, ReadingsRepo, type ReadingRow } from "$lib/server/readings"
 // ---------------------------------------------------------------------------
 
 const REGISTER = "A+";
+const EXPECTED_READINGS_PER_DAY = 96;
 
 // ---------------------------------------------------------------------------
 // Result
@@ -71,16 +72,21 @@ export class ConsumptionGateway extends Context.Service<
               `consumption request: cpe=${cpe} range=[${startIso} → ${endIso}] refresh=${options?.refresh === true}`,
             );
 
-            // Determine missing day blocks.
+            // A day is cached only when its complete 15-minute curve is present.
+            // Partial days must be fetched again so the upsert can fill the gaps.
             let missing: ReadonlyArray<{ start: Date; end: Date }>;
             let hadCache: boolean;
             if (options?.refresh) {
               missing = [{ start, end }];
               hadCache = false;
             } else {
-              const present = yield* repo.daysPresent(cpe, REGISTER, startIso, endIso);
-              hadCache = present.length > 0;
-              missing = missingDayBlocks(start, end, new Set(present));
+              const counts = yield* repo.countsByDate(cpe, REGISTER, startIso, endIso);
+              hadCache = counts.length > 0;
+              missing = missingDayBlocks(
+                start,
+                end,
+                new Map(counts.map(({ day, count }) => [day, count])),
+              );
             }
 
             // Backfill each contiguous missing block from e-redes.
@@ -175,23 +181,23 @@ function daysInRange(start: Date, end: Date): string[] {
 
 /**
  * Compute contiguous `[dayStart, dayEnd)` blocks (as Dates) of days in
- * `[start, end)` not present in `presentDays`.
+ * `[start, end)` that are absent or have an incomplete reading curve.
  *
- * INFO: `presentDays` keys come from `substr(ts,1,10)` of the UTC ts, while
+ * INFO: `readingCounts` keys come from `substr(ts,1,10)` of the UTC ts, while
  * `start`/`end` are local (PT) midnight Dates. PT is UTC±0/+1, so the ±1h
  * offset is ignored. Acceptable for this single-region app.
  */
 function missingDayBlocks(
   start: Date,
   end: Date,
-  presentDays: Set<string>,
+  readingCounts: Map<string, number>,
 ): Array<{ start: Date; end: Date }> {
   const blocks: Array<{ start: Date; end: Date }> = [];
   let blockStart: Date | null = null;
 
   const allDays = daysInRange(start, end);
   for (const day of allDays) {
-    if (presentDays.has(day)) {
+    if ((readingCounts.get(day) ?? 0) >= EXPECTED_READINGS_PER_DAY) {
       if (blockStart !== null) {
         blocks.push({ start: blockStart, end: dayToDate(day, 1) });
         blockStart = null;

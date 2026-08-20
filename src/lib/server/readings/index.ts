@@ -40,22 +40,7 @@ export class ReadingsRepo extends Context.Service<
     /** Upsert readings; rows are matched on (cpe, register, ts). */
     readonly upsert: (rows: ReadonlyArray<NewReading>) => Effect.Effect<number>;
 
-    /**
-     * Distinct calendar days (`YYYY-MM-DD`) with at least one reading in
-     * `[start, end)` (ISO-8601 UTC).
-     *
-     * INFO: day presence is derived from `substr(ts,1,10)` of the UTC ts, while
-     * the gateway's start/end come from local (PT) midnight. PT is UTC±0/+1, so
-     * the ±1h offset is ignored. Acceptable for this single-region app.
-     */
-    readonly daysPresent: (
-      cpe: string,
-      register: string,
-      start: string,
-      end: string,
-    ) => Effect.Effect<ReadonlyArray<string>>;
-
-    /** Number of readings for each UTC calendar day in `[start, end)`. */
+    /** Number of readings for each UTC calendar day in `[start, end)`. Days with no rows are omitted. */
     readonly countsByDate: (
       cpe: string,
       register: string,
@@ -104,24 +89,6 @@ export class ReadingsRepo extends Context.Service<
           ),
           Effect.withSpan("ReadingsRepo.upsert", {
             attributes: { rows: rows.length },
-          }),
-        ),
-
-      daysPresent: (cpe, register, start, end) =>
-        Effect.sync(() => {
-          const db = getDb();
-          const rows = db.prepare(DAYS_PRESENT_SQL).all({ cpe, register, start, end }) as {
-            day: string;
-          }[];
-          return rows.map((r) => r.day);
-        }).pipe(
-          Effect.tap((days) =>
-            Effect.logInfo(
-              `db probe: cpe=${cpe} range=[${start} → ${end}] present=${days.length} days`,
-            ),
-          ),
-          Effect.withSpan("ReadingsRepo.daysPresent", {
-            attributes: { cpe, register, start, end },
           }),
         ),
 
@@ -181,15 +148,5 @@ const COUNTS_BY_DATE_SQL = `
 	  AND ts >= @start
 	  AND ts < @end
 	GROUP BY day
-	ORDER BY day ASC
-`;
-
-const DAYS_PRESENT_SQL = `
-	SELECT DISTINCT substr(ts, 1, 10) AS day
-	FROM readings
-	WHERE cpe = @cpe
-	  AND register = @register
-	  AND ts >= @start
-	  AND ts < @end
 	ORDER BY day ASC
 `;
