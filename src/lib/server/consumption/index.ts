@@ -183,9 +183,7 @@ function daysInRange(start: Date, end: Date): string[] {
  * Compute contiguous `[dayStart, dayEnd)` blocks (as Dates) of days in
  * `[start, end)` that are absent or have an incomplete reading curve.
  *
- * INFO: `readingCounts` keys come from `substr(ts,1,10)` of the UTC ts, while
- * `start`/`end` are local (PT) midnight Dates. PT is UTC±0/+1, so the ±1h
- * offset is ignored. Acceptable for this single-region app.
+ * All dates and day keys use UTC consistently.
  */
 function missingDayBlocks(
   start: Date,
@@ -212,10 +210,10 @@ function missingDayBlocks(
   return blocks;
 }
 
-/** Build a Date at local midnight offset by `addDays` for the given `YYYY-MM-DD`. */
+/** Build a Date at UTC midnight offset by `addDays` for the given `YYYY-MM-DD`. */
 function dayToDate(day: string, addDays: number): Date {
   const [y, m, d] = day.split("-").map(Number);
-  const dt = new Date(y, m - 1, d);
-  dt.setDate(dt.getDate() + addDays);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + addDays);
   return dt;
 }

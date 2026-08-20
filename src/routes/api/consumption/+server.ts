@@ -10,7 +10,7 @@ function parseDateParam(value: string | null, fallback: Date): Date | null {
   if (!value) return fallback;
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return null;
-  d.setHours(0, 0, 0, 0);
+  d.setUTCHours(0, 0, 0, 0);
   return d;
 }
 
@@ -34,9 +34,9 @@ export const GET: RequestHandler = async ({ url }) => {
   }
 
   const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  today.setUTCHours(0, 0, 0, 0);
   const yesterday = new Date(today);
-  yesterday.setDate(yesterday.getDate() - 1);
+  yesterday.setUTCDate(yesterday.getUTCDate() - 1);
 
   const start = parseDateParam(url.searchParams.get("start"), yesterday);
   const end = parseDateParam(url.searchParams.get("end"), today);
