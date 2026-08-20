@@ -39,6 +39,14 @@ export class ConsumptionGateway extends Context.Service<
       end: Date,
       options?: { readonly refresh?: boolean },
     ) => Effect.Effect<GatewayResult, ERedesServiceError>;
+
+    /** Return the readings already cached for each day in `[start, end)`. */
+    readonly getDailyCounts: (
+      cpe: string,
+      start: Date,
+      end: Date,
+      register?: string,
+    ) => Effect.Effect<ReadonlyArray<{ readonly day: string; readonly count: number }>>;
   }
 >()("app/ConsumptionGateway") {
   static readonly Live: Layer.Layer<ConsumptionGateway, never, ERedes | ReadingsRepo> =
@@ -47,6 +55,13 @@ export class ConsumptionGateway extends Context.Service<
       Effect.gen(function* () {
         const eredes = yield* ERedes;
         const repo = yield* ReadingsRepo;
+
+        const getDailyCounts: (typeof ConsumptionGateway)["Service"]["getDailyCounts"] = (
+          cpe,
+          start,
+          end,
+          register = REGISTER,
+        ) => repo.countsByDate(cpe, register, start.toISOString(), end.toISOString());
 
         const get: (typeof ConsumptionGateway)["Service"]["get"] = (cpe, start, end, options) =>
           Effect.gen(function* () {
@@ -119,7 +134,7 @@ export class ConsumptionGateway extends Context.Service<
             }),
           );
 
-        return ConsumptionGateway.of({ get });
+        return ConsumptionGateway.of({ get, getDailyCounts });
       }),
     );
 }

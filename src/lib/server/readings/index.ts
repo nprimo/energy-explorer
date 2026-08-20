@@ -54,6 +54,14 @@ export class ReadingsRepo extends Context.Service<
       start: string,
       end: string,
     ) => Effect.Effect<ReadonlyArray<string>>;
+
+    /** Number of readings for each UTC calendar day in `[start, end)`. */
+    readonly countsByDate: (
+      cpe: string,
+      register: string,
+      start: string,
+      end: string,
+    ) => Effect.Effect<ReadonlyArray<{ readonly day: string; readonly count: number }>>;
   }
 >()("app/ReadingsRepo") {
   static readonly Live: Layer.Layer<ReadingsRepo> = Layer.sync(ReadingsRepo, () =>
@@ -116,6 +124,22 @@ export class ReadingsRepo extends Context.Service<
             attributes: { cpe, register, start, end },
           }),
         ),
+
+      countsByDate: (cpe, register, start, end) =>
+        Effect.sync(() => {
+          const db = getDb();
+          return db.prepare(COUNTS_BY_DATE_SQL).all({ cpe, register, start, end }) as {
+            day: string;
+            count: number;
+          }[];
+        }).pipe(
+          Effect.tap((counts) =>
+            Effect.logInfo(`db probe: cpe=${cpe} range=[${start} → ${end}] days=${counts.length}`),
+          ),
+          Effect.withSpan("ReadingsRepo.countsByDate", {
+            attributes: { cpe, register, start, end },
+          }),
+        ),
     }),
   );
 }
@@ -147,6 +171,17 @@ const GET_RANGE_SQL = `
 	  AND ts >= @start
 	  AND ts < @end
 	ORDER BY ts ASC
+`;
+
+const COUNTS_BY_DATE_SQL = `
+	SELECT substr(ts, 1, 10) AS day, COUNT(*) AS count
+	FROM readings
+	WHERE cpe = @cpe
+	  AND register = @register
+	  AND ts >= @start
+	  AND ts < @end
+	GROUP BY day
+	ORDER BY day ASC
 `;
 
 const DAYS_PRESENT_SQL = `
