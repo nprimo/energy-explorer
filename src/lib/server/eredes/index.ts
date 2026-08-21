@@ -125,15 +125,96 @@ function formatDate(d: Date): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
+const LISBON_TZ = "Europe/Lisbon";
+
+/** Offset for a UTC instant in a given IANA zone: wallMs - utcMs. */
+function getTzOffsetMs(date: Date, timeZone: string): number {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone,
+    hour12: false,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  })
+    .formatToParts(date)
+    .reduce<Record<string, string>>((acc, p) => {
+      if (p.type !== "literal") acc[p.type] = p.value;
+      return acc;
+    }, {});
+  const wallMs = Date.UTC(
+    +parts.year,
+    +parts.month - 1,
+    +parts.day,
+    +parts.hour,
+    +parts.minute,
+    +parts.second,
+  );
+  return wallMs - date.getTime();
+}
+
+/** Convert a Lisbon wall time (Y,M,D,h,m,s) to the correct UTC instant. */
+function lisbonWallToUtc(
+  year: number,
+  month: number,
+  day: number,
+  hour: number,
+  minute: number,
+  second: number,
+): Date {
+  const wallMs = Date.UTC(year, month - 1, day, hour, minute, second);
+  // Iterate to converge when offset changes across DST transition.
+  let utcMs = wallMs - getTzOffsetMs(new Date(wallMs), LISBON_TZ);
+  utcMs = wallMs - getTzOffsetMs(new Date(utcMs), LISBON_TZ);
+  return new Date(utcMs);
+}
+
 function parseTimestamp(s: string): Date | null {
-  const formats = [
-    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/,
-    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/,
-    /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/,
-  ];
-  if (!formats.some((re) => re.test(s))) return null;
-  const d = new Date(s);
+  // E-REDES sends wall time in Europe/Lisbon but with a trailing "Z" lie.
+  // See eredes-observation.md: March gap 00:45->02:00 and October duplicates.
+  const normalized = s.endsWith("Z") ? s.slice(0, -1) : s;
+  const withT = normalized.includes(" ") ? normalized.replace(" ", "T") : normalized;
+  const m = withT.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})$/);
+  if (!m) return null;
+  const [, Y, Mo, D, h, mi, se] = m;
+  const d = lisbonWallToUtc(+Y, +Mo, +D, +h, +mi, +se);
   return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function lastSundayOfOctober(year: number): number {
+  const dow = new Date(Date.UTC(year, 9, 31)).getUTCDay(); // 9=Oct, 0=Sun
+  return 31 - dow; // 25..31
+}
+
+function isFallBackAmbiguousWall(
+  y: number,
+  m: number,
+  d: number,
+  h: number,
+  mi: number,
+  s: number,
+): boolean {
+  return (
+    m === 10 &&
+    d === lastSundayOfOctober(y) &&
+    h === 1 &&
+    (mi === 0 || mi === 15 || mi === 30 || mi === 45) &&
+    s === 0
+  );
+}
+
+/** Parse a wall string to components, returns null if format invalid. */
+function parseWallComponents(
+  s: string,
+): { y: number; m: number; d: number; h: number; mi: number; se: number } | null {
+  const normalized = s.endsWith("Z") ? s.slice(0, -1) : s;
+  const withT = normalized.includes(" ") ? normalized.replace(" ", "T") : normalized;
+  const mm = withT.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})$/);
+  if (!mm) return null;
+  const [, Y, Mo, D, h, mi, se] = mm;
+  return { y: +Y, m: +Mo, d: +D, h: +h, mi: +mi, se: +se };
 }
 
 /** Pure conversion from the decoded raw response into the domain model. */
@@ -143,16 +224,33 @@ function parseResponse(
   startDate: Date,
   endDate: Date,
 ): ConsumptionData {
+  return parseResponseWithDiagnostics(cpe, data, startDate, endDate).data;
+}
+
+/** Same as parseResponse but also returns warnings for unexpected duplicates. */
+function parseResponseWithDiagnostics(
+  cpe: string,
+  data: Schema.Schema.Type<typeof RawResponse>,
+  startDate: Date,
+  endDate: Date,
+): { data: ConsumptionData; warnings: string[] } {
   const readings: ConsumptionReading[] = [];
+  const warnings: string[] = [];
   const body = data.Body;
   if (!body?.Success) {
-    return new ConsumptionData({
-      cpe,
-      readings,
-      startDate: startDate.toISOString(),
-      endDate: endDate.toISOString(),
-    });
+    return {
+      data: new ConsumptionData({
+        cpe,
+        readings,
+        startDate: startDate.toISOString(),
+        endDate: endDate.toISOString(),
+      }),
+      warnings,
+    };
   }
+  // Track duplicates in payload order — only 01:00-01:45 on last Sunday of Oct is expected x2.
+  const wallSeen = new Map<string, number>();
+  const utcSeen = new Set<string>();
   const devices = body.Result?.utilitiesDevices ?? [];
   for (const device of devices) {
     for (const group of device.meterLoadCurves ?? []) {
@@ -161,14 +259,45 @@ function parseResponse(
         const ts = curve.loadCurveTimestamp;
         const val = curve.meterLoadCurve;
         if (!ts || val === undefined || val === null) continue;
-        const parsed = parseTimestamp(ts);
-        if (!parsed) continue;
+        const comp = parseWallComponents(ts);
+        if (!comp) continue;
+        const { y, m, d, h, mi, se } = comp;
+        const isAmbiguous = isFallBackAmbiguousWall(y, m, d, h, mi, se);
+        let parsed: Date | null = null;
+        const seen = wallSeen.get(ts) ?? 0;
+        if (isAmbiguous) {
+          // Ordered: #1 = WEST (+1, earlier UTC), #2 = WET (+0, later UTC)
+          const wallMs = Date.UTC(y, m - 1, d, h, mi, se);
+          if (seen === 0) parsed = new Date(wallMs - 3600_000);
+          else if (seen === 1) parsed = new Date(wallMs);
+          else {
+            warnings.push(
+              `eredes duplicate: >2 occurrences for fallback wall=${ts} cpe=${cpe} occ=${seen + 1}`,
+            );
+            parsed = new Date(wallMs); // keep as WET for extras
+          }
+          wallSeen.set(ts, seen + 1);
+        } else {
+          if (seen > 0) {
+            warnings.push(
+              `eredes duplicate: wall=${ts} cpe=${cpe} occ=${seen + 1} outside fallback window (expected only 01:00-01:45 on last Sunday of Oct)`,
+            );
+          }
+          wallSeen.set(ts, seen + 1);
+          parsed = lisbonWallToUtc(y, m, d, h, mi, se);
+        }
+        if (!parsed || Number.isNaN(parsed.getTime())) continue;
+        const iso = parsed.toISOString();
+        if (utcSeen.has(iso)) {
+          warnings.push(`eredes duplicate UTC: utc=${iso} wall=${ts} cpe=${cpe}`);
+        }
+        utcSeen.add(iso);
         const unit = (curve.meterLoadCurveUnitMeasurement ?? "").toLowerCase();
         const valueWh = unit === "kwh" ? val * 1000 : val;
         const status = curve.meterLoadCurveStatus ?? "unknown";
         readings.push(
           new ConsumptionReading({
-            timestamp: parsed.toISOString(),
+            timestamp: iso,
             valueWh,
             status,
           }),
@@ -177,12 +306,15 @@ function parseResponse(
     }
   }
   readings.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-  return new ConsumptionData({
-    cpe,
-    readings,
-    startDate: startDate.toISOString(),
-    endDate: endDate.toISOString(),
-  });
+  return {
+    data: new ConsumptionData({
+      cpe,
+      readings,
+      startDate: startDate.toISOString(),
+      endDate: endDate.toISOString(),
+    }),
+    warnings,
+  };
 }
 
 function errorToString(cause: unknown): string {
@@ -309,7 +441,16 @@ export class ERedes extends Context.Service<
                         }),
                     ),
                   );
-                  return parseResponse(cpe, raw, startDate, endDate);
+                  const parsed = parseResponseWithDiagnostics(cpe, raw, startDate, endDate);
+                  for (const w of parsed.warnings) {
+                    yield* Effect.logWarning(w);
+                  }
+                  if (parsed.warnings.length > 0) {
+                    yield* Effect.logInfo(
+                      `eredes diagnostics: cpe=${cpe} warnings=${parsed.warnings.length} readings=${parsed.data.readings.length}`,
+                    );
+                  }
+                  return parsed.data;
                 }),
               [401]: () =>
                 Effect.fail(
