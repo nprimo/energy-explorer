@@ -1,6 +1,6 @@
 <script lang="ts">
 	import EnergyChart from "$lib/components/EnergyChart.svelte";
-	import ReadingsCalendar from "$lib/components/ReadingsCalendar.svelte";
+	import YearlyCalendarHeatmap from "$lib/components/YearlyCalendarHeatmap.svelte";
 	import type { PageData } from "./$types";
 
 	let { data }: { data: PageData } = $props();
@@ -23,7 +23,7 @@
 
 <h1>E-REDES consumption</h1>
 
-<ReadingsCalendar cpe={data.cpe} />
+<YearlyCalendarHeatmap cpe={data.cpe} />
 
 <div class="controls">
 	<label>
