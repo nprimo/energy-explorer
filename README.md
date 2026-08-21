@@ -1,5 +1,14 @@
 # Energy explorer
 
+Still playing around - final objective is:
+
+- better understanding electricity consumption pattern;
+- explore ways to minimize electricity bills;
+- explore ways to minimize CO2 emissions links to electricity consumption (this
+  should be in line with the above);
+- identify potential investing opportunities (solar PV, batteries, collective
+  self-consumption ...).
+
 ## Set up
 
 Add your CPE and `aat` cookie value inside a `.env` file and run `pnpm dev`
