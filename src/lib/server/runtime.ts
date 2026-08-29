@@ -37,10 +37,13 @@ const ObservabilityLayer = buildObservabilityLayer();
 // as a side effect).
 // ---------------------------------------------------------------------------
 
-function buildServerLive(): Layer.Layer<ConsumptionGateway> {
-  const services = ConsumptionGateway.Live.pipe(
-    Layer.provide(Layer.merge(ERedes.withAccessToken(env.EREDES_AAT ?? ""), ReadingsRepo.Live)),
-  );
+function buildServerLive() {
+  const eredes = ERedes.withAccessToken(env.EREDES_AAT ?? "");
+  const readingsRepo = ReadingsRepo.Live;
+  const gateway = ConsumptionGateway.Live.pipe(Layer.provide(Layer.merge(eredes, readingsRepo)));
+  // Merge every service into the top-level output so the runtime environment
+  // provides all of them (gateway dependencies included), not just the gateway.
+  const services = Layer.mergeAll(gateway, eredes, readingsRepo);
   return ObservabilityLayer ? Layer.merge(services, ObservabilityLayer) : services;
 }
 
@@ -61,10 +64,15 @@ export const runtime = ManagedRuntime.make(ServerLive, { memoMap: appMemoMap });
 /**
  * Run an Effect program against the server runtime from a non-Effect edge
  * (e.g. a SvelteKit `+server.ts` handler). Returns a Promise.
+ *
+ * Accepts any program whose requirements the ServerLive layer graph builds
+ * (ConsumptionGateway, ERedes, ReadingsRepo) — they are all constructed inside
+ * the runtime even though the layer's declared success type is just
+ * ConsumptionGateway.
  */
-export const run: <A, E>(program: Effect.Effect<A, E, ConsumptionGateway>) => Promise<A> = (
-  program,
-) => runtime.runPromise(program);
+export const run = <A, E>(
+  program: Effect.Effect<A, E, ConsumptionGateway | ERedes | ReadingsRepo>,
+): Promise<A> => runtime.runPromise(program);
 
 // Release scoped resources on process shutdown.
 const shutdown = () => {

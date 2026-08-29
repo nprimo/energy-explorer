@@ -14,6 +14,12 @@ export class ReadingRow extends Schema.Class<ReadingRow>("readings/ReadingRow")(
   insertedAt: Schema.String,
 }) {}
 
+export interface LatestDaysResult {
+  /** Available days (YYYY-MM-DD UTC), ordered oldest → newest. */
+  readonly days: ReadonlyArray<string>;
+  readonly rows: ReadonlyArray<ReadingRow>;
+}
+
 export class NewReading extends Schema.Class<NewReading>("readings/NewReading")({
   cpe: Schema.String,
   register: Schema.String,
@@ -47,6 +53,17 @@ export class ReadingsRepo extends Context.Service<
       start: string,
       end: string,
     ) => Effect.Effect<ReadonlyArray<{ readonly day: string; readonly count: number }>>;
+
+    /**
+     * The `days` most recent UTC calendar days that have cached readings, and
+     * all readings on those days, ordered by ts. Reads the cache only — never
+     * backfills from e-redes.
+     */
+    readonly getLatestDays: (
+      cpe: string,
+      register: string,
+      days: number,
+    ) => Effect.Effect<LatestDaysResult>;
   }
 >()("app/ReadingsRepo") {
   static readonly Live: Layer.Layer<ReadingsRepo> = Layer.sync(ReadingsRepo, () =>
@@ -107,6 +124,35 @@ export class ReadingsRepo extends Context.Service<
             attributes: { cpe, register, start, end },
           }),
         ),
+
+      getLatestDays: (cpe, register, days) =>
+        Effect.sync(() => {
+          const db = getDb();
+          const found = db.prepare(LATEST_DAYS_SQL).all({ cpe, register, limit: days }) as {
+            day: string;
+          }[];
+          if (found.length === 0) return { days: [], rows: [] } satisfies LatestDaysResult;
+
+          // `found` is newest-first; the oldest available day bounds the range.
+          // Every day with rows inside [oldest, newest] is among the N most
+          // recent by construction, so a range fetch returns exactly those days.
+          const start = `${found[found.length - 1].day}T00:00:00Z`;
+          const end = `${nextDay(found[0].day)}T00:00:00Z`;
+          const rows = db.prepare(GET_RANGE_SQL).all({ cpe, register, start, end }) as ReadingRow[];
+          return {
+            days: found.map((r) => r.day).reverse(),
+            rows,
+          } satisfies LatestDaysResult;
+        }).pipe(
+          Effect.tap((result) =>
+            Effect.logInfo(
+              `db latest days: cpe=${cpe} requested=${days} days=${result.days.length} rows=${result.rows.length}`,
+            ),
+          ),
+          Effect.withSpan("ReadingsRepo.getLatestDays", {
+            attributes: { cpe, register, days },
+          }),
+        ),
     }),
   );
 }
@@ -140,6 +186,14 @@ const GET_RANGE_SQL = `
 	ORDER BY ts ASC
 `;
 
+/** The calendar day after `day` (YYYY-MM-DD), via UTC. */
+function nextDay(day: string): string {
+  const [y, m, d] = day.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + 1);
+  return dt.toISOString().slice(0, 10);
+}
+
 const COUNTS_BY_DATE_SQL = `
 	SELECT substr(ts, 1, 10) AS day, COUNT(*) AS count
 	FROM readings
@@ -149,4 +203,13 @@ const COUNTS_BY_DATE_SQL = `
 	  AND ts < @end
 	GROUP BY day
 	ORDER BY day ASC
+`;
+
+const LATEST_DAYS_SQL = `
+	SELECT DISTINCT substr(ts, 1, 10) AS day
+	FROM readings
+	WHERE cpe = @cpe
+	  AND register = @register
+	ORDER BY day DESC
+	LIMIT @limit
 `;
