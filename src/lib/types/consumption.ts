@@ -14,4 +14,5 @@ export type ConsumptionResponse = {
   source: "cache" | "api" | "partial";
   count: number;
   readings: ConsumptionReading[];
+  fetchedDays: string[];
 };

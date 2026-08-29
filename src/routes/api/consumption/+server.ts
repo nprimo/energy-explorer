@@ -50,6 +50,7 @@ export const GET: RequestHandler = async ({ url }) => {
   let result: {
     rows: ReadonlyArray<{ ts: string; valueWh: number; status: string }>;
     source: ConsumptionSource;
+    fetchedDays: ReadonlyArray<string>;
   };
   try {
     result = await run(
@@ -73,5 +74,6 @@ export const GET: RequestHandler = async ({ url }) => {
     source: result.source,
     count: result.rows.length,
     readings: result.rows.map(rowToJson),
+    fetchedDays: [...result.fetchedDays],
   });
 };

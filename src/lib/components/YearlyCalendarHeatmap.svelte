@@ -5,11 +5,18 @@
 	import { utcSunday } from "d3-time";
 	import { tooltip } from "@tanstack/charts/tooltip";
 	import { Chart } from "@tanstack/charts/svelte";
+	import { SvelteDate } from "svelte/reactivity";
 
 	type Props = {
 		cpe: string;
 		register?: string;
 		expectedReadingsPerDay?: number;
+		/** Increment to force a full re-fetch of the current year. */
+		refreshKey?: number;
+		/** Days (YYYY-MM-DD) that were just fetched from E-REDES — highlighted in UI. */
+		highlightDays?: string[];
+		/** Incremental count overrides merged live without a full reload. */
+		incrementalCounts?: Record<string, number>;
 	};
 
 	type CalendarRow = {
@@ -18,33 +25,54 @@
 		status: "empty" | "partial" | "complete";
 	};
 
-	const { cpe, register = "A+", expectedReadingsPerDay = 96 }: Props = $props();
+	const {
+		cpe,
+		register = "A+",
+		expectedReadingsPerDay = 96,
+		refreshKey = 0,
+		highlightDays = [],
+		incrementalCounts = {},
+	}: Props = $props();
 
-	const now = new Date();
+	const now = new SvelteDate();
 	const weekdays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 	let selectedYear = $state(now.getFullYear());
-	let readingCounts = $state<Record<string, number>>({});
+	let baseCounts = $state.raw<Record<string, number>>({});
 	let loading = $state(false);
 	let loadError = $state<string | null>(null);
 	let requestNumber = 0;
 
-	const yearRange = $derived(() => {
+	// Effective counts = base (from DB) + incremental patch from parent (optimistic).
+	// Use a derived so we never write to a signal we also read inside an $effect
+	// (which would cause self-referential loops and stale tooltip datums).
+	const effectiveCounts = $derived({ ...baseCounts, ...incrementalCounts });
+
+	const yearRange = $derived.by(() => {
 		const current = now.getFullYear();
 		return Array.from({ length: 5 }, (_, i) => current - i);
 	});
 
 	const expectedCount = $derived(Math.max(1, expectedReadingsPerDay));
 
+	const highlightSet = $derived(new Set(highlightDays));
+
+	// Key that changes whenever the data the chart renders changes.
+	// Used to force @tanstack/charts to recreate its interaction layer,
+	// otherwise the SVG rects update (color) but tooltip datum stays stale.
+	// JSON.stringify cost is ~2KB for a year and only runs on fetch/year change.
+	const chartKey = $derived(`${selectedYear}:${JSON.stringify(effectiveCounts)}:${highlightDays.join(",")}`);
+
 	const calendarRows = $derived.by((): CalendarRow[] => {
 		const yearStart = new Date(Date.UTC(selectedYear, 0, 1));
 		const yearEnd = new Date(Date.UTC(selectedYear + 1, 0, 1));
 		const rows: CalendarRow[] = [];
 		const d = new Date(yearStart);
+		const counts = effectiveCounts;
 
 		while (d < yearEnd) {
 			const key = formatKey(d);
-			const count = readingCounts[key] ?? 0;
+			const count = counts[key] ?? 0;
 			rows.push({
 				date: new Date(d),
 				count,
@@ -101,6 +129,8 @@
 
 	$effect(() => {
 		const year = selectedYear;
+		// depend on refreshKey so parent can force a reload after a fetch
+		void refreshKey;
 		void loadYear(cpe.trim(), register.trim() || "A+", year);
 	});
 
@@ -123,7 +153,7 @@
 
 	async function loadYear(selectedCpe: string, selectedRegister: string, year: number) {
 		const currentRequest = ++requestNumber;
-		readingCounts = {};
+		baseCounts = {};
 		loadError = null;
 
 		if (!selectedCpe) {
@@ -158,7 +188,7 @@
 			}
 
 			if (currentRequest === requestNumber) {
-				readingCounts = merged;
+				baseCounts = merged;
 			}
 		} catch (error) {
 			if (currentRequest === requestNumber) {
@@ -174,6 +204,8 @@
 	{@const point = points?.[0]}
 	{#if point}
 		{@const d = point.datum as CalendarRow}
+		{@const key = formatKey(d.date)}
+		{@const isFresh = highlightSet.has(key)}
 		<div class="heatmap-tooltip">
 			<div class="tooltip-date">{formatDateLong(d.date)}</div>
 			<div class="tooltip-count">
@@ -182,6 +214,9 @@
 			<div class="tooltip-status {d.status}">
 				{d.status === "complete" ? "Complete" : d.status === "partial" ? "Partial" : "No data"}
 			</div>
+			{#if isFresh}
+				<div class="tooltip-fresh">Fetched from E-REDES</div>
+			{/if}
 		</div>
 	{:else}
 		{@render defaultBody()}
@@ -195,10 +230,10 @@
 			<label class="year-select">
 				<span class="sr-only">Select year</span>
 				<select bind:value={selectedYear}>
-					{#each yearRange() as year}
+					{#each yearRange as year (year)}
 						<option value={year}>{year}</option>
 					{/each}
-				</select>
+			</select>
 			</label>
 			{#if loading}
 				<span class="loading-badge" aria-label="Loading">Loading…</span>
@@ -210,14 +245,31 @@
 		<p class="error" role="alert">Could not load readings: {loadError}</p>
 	{/if}
 
-	<div class="chart-wrapper">
-		<Chart
-			definition={chartDef}
-			ariaLabel={`Reading completion calendar for ${selectedYear}`}
-			height={220}
-			{tooltipBody}
-		/>
-	</div>
+	<!-- Key the chart on the effective data so @tanstack/charts fully recreates
+		     points/tooltip state when counts change live. Without this, the SVG
+		     rects update (color) but the interaction layer can retain stale datum
+		     for the tooltip until the next hover. -->
+	{#key chartKey}
+		<div class="chart-wrapper">
+			<Chart
+				definition={chartDef}
+				ariaLabel={`Reading completion calendar for ${selectedYear}`}
+				height={220}
+				{tooltipBody}
+			/>
+		</div>
+	{/key}
+
+	{#if highlightDays.length > 0}
+		{@const visibleHighlights = highlightDays.filter((d) => d.startsWith(String(selectedYear)))}
+		{#if visibleHighlights.length > 0}
+			<p class="fresh-note" role="status">
+				<span class="fresh-dot" aria-hidden="true"></span>
+				{visibleHighlights.length} day{visibleHighlights.length === 1 ? "" : "s"} just fetched from E-REDES
+				<span class="fresh-days">{visibleHighlights.slice(0, 5).join(", ")}{visibleHighlights.length > 5 ? ` +${visibleHighlights.length - 5} more` : ""}</span>
+			</p>
+		{/if}
+	{/if}
 </section>
 
 <style>
@@ -300,6 +352,40 @@
 		padding: 0.25rem 0;
 		font-size: 0.8rem;
 		line-height: 1.4;
+	}
+
+	.tooltip-fresh {
+		margin-top: 0.25rem;
+		padding: 0.1rem 0.35rem;
+		border-radius: 0.25rem;
+		background: #dbeafe;
+		color: #1e40af;
+		font-size: 0.7rem;
+		font-weight: 600;
+	}
+
+	.fresh-note {
+		margin: 0.75rem 0 0;
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.4rem;
+		font-size: 0.75rem;
+		color: #1e40af;
+	}
+
+	.fresh-dot {
+		width: 0.55rem;
+		height: 0.55rem;
+		border-radius: 50%;
+		background: #3b82f6;
+		box-shadow: 0 0 0 4px #dbeafe;
+		display: inline-block;
+	}
+
+	.fresh-days {
+		color: #6b7280;
+		font-variant-numeric: tabular-nums;
 	}
 
 	.tooltip-date {
