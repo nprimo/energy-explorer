@@ -1,13 +1,17 @@
 <script lang="ts">
-	import DailyProfileClock from "$lib/components/DailyProfileClock.svelte";
+	import DailyProfileChart from "$lib/components/DailyProfileChart.svelte";
 	import { niceCeil, profileMax } from "$lib/consumption/profile";
+	import { useClock } from "$lib/time/clock.svelte";
 	import type { PageProps } from "./$types";
 
 	let { data }: PageProps = $props();
 
-	let showDots = $state(true);
-
 	const profile = $derived(data.profile);
+
+	// Today's classification drives which profile graph is shown. Shared clock
+	// zone with the chart's "now" marker (Europe/Lisbon).
+	const today = useClock("Europe/Lisbon");
+	const todayKind = $derived(today.current.dayKind);
 
 	const sharedMax = $derived(profile ? niceCeil(profileMax(profile) * 1.05) : undefined);
 
@@ -38,24 +42,20 @@
 {#if data.range.count === 0}
 	<p class="status">No cached readings yet. Fetch some from E-REDES first.</p>
 {:else if profile}
-	<label class="dots-toggle">
-		<input type="checkbox" bind:checked={showDots} />
-		Show per-day readings
-	</label>
-
-	<div class="clocks">
-		<DailyProfileClock
-			title="Weekdays (Mon–Fri)"
-			stats={profile.workday}
-			maxWh={sharedMax}
-			{showDots}
-		/>
-		<DailyProfileClock
-			title="Weekends (Sat–Sun)"
-			stats={profile.weekend}
-			maxWh={sharedMax}
-			{showDots}
-		/>
+	<div class="charts">
+		{#if todayKind === "workday"}
+			<DailyProfileChart
+				title="Weekdays (Mon–Fri) — today"
+				stats={profile.workday}
+				maxWh={sharedMax}
+			/>
+		{:else}
+			<DailyProfileChart
+				title="Weekends (Sat–Sun) — today"
+				stats={profile.weekend}
+				maxWh={sharedMax}
+			/>
+		{/if}
 	</div>
 
 	<p class="note">
@@ -78,23 +78,14 @@
 		color: #4b5563;
 		font-size: 0.875rem;
 	}
-	.dots-toggle {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.4rem;
-		margin-bottom: 1rem;
-		font-size: 0.8rem;
-		color: #4b5563;
-		cursor: pointer;
-	}
-	.clocks {
+	.charts {
 		display: flex;
 		flex-wrap: wrap;
 		gap: 1rem;
 	}
-	.clocks > :global(*) {
-		flex: 1 1 380px;
-		max-width: 500px;
+	.charts > :global(*) {
+		flex: 1 1 420px;
+		max-width: 700px;
 	}
 	.note {
 		margin-top: 1rem;

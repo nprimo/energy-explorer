@@ -57,3 +57,23 @@ _Avoid_: Billing period, billing cycle (use Invoice period)
 _Avoid_: GitHub blocks, heat map (use Calendar heatmap)
 
 **Local time** — always Europe/Lisbon. The user's physical location does not affect time zone. E-REDES returns timestamps in local Lisbon time. Stored timestamps must be converted to true UTC for storage, then converted back to local time for display and analysis.
+
+## Tariff domain
+
+**Tariff period** — the label assigned to each moment of the day and week for pricing (ERSE's "período horário"). Umbrella term covering both regulated and billed periods. Bare "Period" stays reserved for analysis windows.
+_Avoid_: time-of-use period, posto
+
+**Regulated period** — one of the four periods defined by the ERSE directives for Portugal continental: ponta, cheias, vazio normal, super vazio. Depends on the date and the contract's cycle, not on the contract's option. Values use the directive's own Portuguese names.
+_Avoid_: time band, price period
+
+**Billed period** — the period a contract's option collapses regulated periods into for pricing: vazio, fora de vazio, cheias, ponta, or único (simples).
+_Avoid_: bucket, bracket
+
+**Tariff structure** — the contract knowledge needed to price energy: the option (simples, bi-horário, tri-horário) and, for bi-horário and tri-horário, the cycle. A simples contract has no cycle.
+_Avoid_: contract type, plan
+
+**Cycle** — the counting cycle (ciclo de contagem): diário (tariff periods identical every day) or semanal (tariff periods differ between weekdays, Saturdays, Sundays, and seasons). A property of the contract, chosen by the consumer.
+_Avoid_: cadence, schedule
+
+**Season** — the legal-time half of the year a date falls in: hora legal de inverno or hora legal de verão, per Decreto-Lei n.º 17/96. Some cycles differentiate tariff periods by season; others do not.
+_Avoid_: semester, epoch (use época only when quoting the directive's ciclo semanal por épocas)

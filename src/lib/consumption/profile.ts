@@ -93,12 +93,13 @@ function summarize(slot: number, values: number[]): SlotStat {
   };
 }
 
-/** Largest mean + std across both day kinds — a shared radial scale domain. */
+/** Largest mean + 2 std across both day kinds — a shared y-domain covering
+ *  the outer band (per-day outliers no longer plotted). */
 export function profileMax(profile: DailyProfile): number {
   let max = 0;
   for (const kind of DAY_KINDS) {
     for (const stat of profile[kind]) {
-      max = Math.max(max, stat.mean + stat.std, stat.max);
+      max = Math.max(max, stat.mean + 2 * stat.std);
     }
   }
   return max;
