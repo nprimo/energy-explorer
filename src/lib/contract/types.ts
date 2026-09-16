@@ -1,4 +1,4 @@
-// Contract domain types for invoice estimation. See docs/contract-invoice-plan.md.
+// Contract domain types for cost estimation. See docs/contract-invoice-plan.md.
 // Mirrors the shape of src/lib/tariff/ — pure types, no DB, no time logic.
 
 import type { BilledPeriod, Cycle, TariffOption } from "$lib/tariff/periods";
@@ -6,8 +6,8 @@ import type { BilledPeriod, Cycle, TariffOption } from "$lib/tariff/periods";
 /** Lisbon calendar date ("YYYY-MM-DD"). Every contract date is a local date. */
 export type LisbonDate = string;
 
-/** Half-open [start, end) billing window, UTC ISO-8601; starts are 00:00 Lisbon. */
-export type InvoicePeriodRange = { readonly start: string; readonly end: string };
+/** Half-open [start, end) analysis range, UTC ISO-8601. */
+export type CostRange = { readonly start: string; readonly end: string };
 
 /**
  * How an indexed contract derives its energy price. Reserved term — the shape
@@ -37,10 +37,8 @@ export type ContractPricing = FixedPricing | IndexedPricing;
 
 /**
  * An effective-dated electricity contract. A switch is a new row whose
- * `validFrom` is the switch date; history is kept so past invoices can be
- * recomputed with the contract actually in force. `contractAnchorDate` is the
- * Lisbon date the billing cycle started — every invoice period is derived
- * from it (see invoice-period.ts).
+ * `validFrom` is the switch date; history is kept so past costs can be
+ * recomputed with the contract actually in force.
  */
 export type Contract = {
   readonly id: string;
@@ -48,7 +46,6 @@ export type Contract = {
   readonly option: TariffOption;
   /** Counting cycle; null when simples (simples skips regulated-period resolution). */
   readonly countingCycle: Cycle | null;
-  readonly contractAnchorDate: LisbonDate;
   readonly contractedPowerKva: number;
   /** €/day per kVA, integer 10⁻⁴ (covers the network-access power charge). */
   readonly powerPricePerDay: number;
@@ -74,7 +71,7 @@ export type BilledPeriodEnergy = {
   readonly eur: number;
 };
 
-/** Power subtotal for one contract, pro-rated by its active days in the period. */
+/** Power subtotal for one contract, pro-rated by its active days in the range. */
 export type ContractPowerDays = {
   readonly contractId: string;
   readonly days: number;
@@ -82,23 +79,23 @@ export type ContractPowerDays = {
 };
 
 /** The honesty layer (ADR 0001 spirit: never extrapolate). */
-export type InvoiceCoverage = {
-  /** 15-min slots inside the period that have at least one reading. */
+export type CostCoverage = {
+  /** 15-min slots inside the range that have at least one reading. */
   readonly slotsWithData: number;
   /**
-   * Slots we should have data for: from the period start to the end of the
-   * latest reading we hold (or the period end, if data covers it). A running
-   * period is never penalized for its projected future.
+   * Slots we should have data for: from the range start to the end of the
+   * latest reading we hold (or the range end, if data covers it). Ranges that
+   * extend past the data are never penalized for their missing future.
    */
   readonly slotsExpected: number;
   /** Readings included in the totals but flagged estimated by E-REDES. */
   readonly estimatedReadings: number;
 };
 
-/** Pre-tax cost of one invoice period. Tax (IVA) layers on later, per period. */
-export type InvoiceCost = {
-  readonly periodStart: string;
-  readonly periodEnd: string;
+/** Pre-tax cost over an analysis range. Tax (IVA) layers on later, outside the calculator. */
+export type CostEstimate = {
+  readonly rangeStart: string;
+  readonly rangeEnd: string;
   readonly totalEur: number;
   readonly energy: {
     readonly totalEur: number;
@@ -108,7 +105,7 @@ export type InvoiceCost = {
     readonly totalEur: number;
     readonly activeDaysPerContract: ReadonlyArray<ContractPowerDays>;
   };
-  readonly coverage: InvoiceCoverage;
-  /** Tariff versions used while pricing — for invoice-discrepancy debugging (ADR 0004). */
+  readonly coverage: CostCoverage;
+  /** Tariff versions used while pricing — for cost-discrepancy debugging (ADR 0004). */
   readonly tariffVersionIds: ReadonlyArray<string>;
 };

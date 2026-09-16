@@ -111,20 +111,21 @@ flowchart LR
 
 ## Source table
 
-| Source          | Data                                              | Update frequency                             | Access                  | Auth                                                  | Notes                                                                               |
-| --------------- | ------------------------------------------------- | -------------------------------------------- | ----------------------- | ----------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| E-REDES         | Reading (15-min kWh)                              | ~D+1, published per day                      | Unofficial API          | Session token from login flow; expires, needs refresh | Only `A+` register today; future `A-` for solar                                     |
-| ERSE simulator  | Tariff offers (all liberalized offers ≤ 41.4 kVA) | Periodic re-publication (path changes)       | Public CSV ZIP, no auth | None                                                  | Discover path via `Settings.json` → `csvPath`; do not hardcode                      |
-| OMIE            | Spot price €/MWh, hourly                          | Daily, after market close (~13:00–18:00 CET) | Public files, no auth   | None                                                  | Portugal + Spain zones                                                              |
-| ElectricityMaps | CO2 intensity g/kWh                               | Hourly (historical) / live (real-time)       | Official REST API       | API key, free tier is rate-limited                    | Zone PT                                                                             |
-| Local DB        | Contract (effective-dated pricing row)            | Hand-seeded via SQL in v1 (no CRUD UI)       | Ours (SQLite)           | None                                                  | Prices as integer 10⁻⁴ €/kWh and 10⁻⁴ €/day/kVA; anchor date drives invoice periods |
+| Source          | Data                                              | Update frequency                             | Access                  | Auth                                                  | Notes                                                                                                                |
+| --------------- | ------------------------------------------------- | -------------------------------------------- | ----------------------- | ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| E-REDES         | Reading (15-min kWh)                              | ~D+1, published per day                      | Unofficial API          | Session token from login flow; expires, needs refresh | Only `A+` register today; future `A-` for solar                                                                      |
+| ERSE simulator  | Tariff offers (all liberalized offers ≤ 41.4 kVA) | Periodic re-publication (path changes)       | Public CSV ZIP, no auth | None                                                  | Discover path via `Settings.json` → `csvPath`; do not hardcode                                                       |
+| OMIE            | Spot price €/MWh, hourly                          | Daily, after market close (~13:00–18:00 CET) | Public files, no auth   | None                                                  | Portugal + Spain zones                                                                                               |
+| ElectricityMaps | CO2 intensity g/kWh                               | Hourly (historical) / live (real-time)       | Official REST API       | API key, free tier is rate-limited                    | Zone PT                                                                                                              |
+| Local DB        | Contract (effective-dated pricing row)            | Hand-seeded via SQL in v1 (no CRUD UI)       | Ours (SQLite)           | None                                                  | Prices as integer 10⁻⁴ €/kWh and 10⁻⁴ €/day/kVA; costs computed pre-tax over any analysis range (no invoice periods) |
 
 ## Open questions
 
 - Estimated vs. real readings: which E-REDES flag marks them, and where do we
   store that?
 - ~~Does the tariff comparison need invoice periods (22nd–21st) or are civil
-  months enough?~~ **Answered:** yes — invoice periods derive monthly from each
-  contract's anchor date (see `src/lib/contract/invoice-period.ts` and
-  `docs/contract-invoice-plan.md`), not from civil months.
+  months enough?~~ **Dropped:** there are no invoice periods. Costs are computed
+  pre-tax over any analysis range — quarters and years are the interesting
+  comparison units, and seasonal behaviour makes a single month unrepresentative
+  (see `docs/contract-invoice-plan.md`, "Why no invoice period").
 - Which OMIE price applies: day-ahead hourly, or a fixed indexed formula?

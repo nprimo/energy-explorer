@@ -1,6 +1,6 @@
-// Invoice cost calculator (docs/contract-invoice-plan.md): pure module, no DB.
+// Cost calculator (docs/contract-invoice-plan.md): pure module, no DB.
 // Every 15-min Reading is priced independently by the contract in force at its
-// own timestamp; totals are sums. A contract switch mid-period splits
+// own timestamp; totals are sums. A contract switch mid-range splits
 // naturally: no reading is ever priced by a contract that was not in force at
 // that moment, and the power term is pro-rated by active days per contract.
 // Tax (IVA) is out of scope — totals are pre-tax so it can layer on later.
@@ -14,12 +14,12 @@ import type {
   BilledPeriodEnergy,
   Contract,
   ContractPowerDays,
+  CostEstimate,
+  CostRange,
   CostReading,
-  InvoiceCost,
-  InvoicePeriodRange,
   LisbonDate,
 } from "./types";
-import { lisbonDateOf, lisbonMidnightInstant } from "./invoice-period";
+import { lisbonDateOf, lisbonMidnightInstant } from "./lisbon";
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -41,7 +41,7 @@ export class IndexedPricingNotSupportedError extends Data.TaggedError(
   readonly contractId: string;
 }> {}
 
-export type InvoiceCostError =
+export type CostError =
   | NoContractInForceError
   | OverlappingContractsError
   | IndexedPricingNotSupportedError;
@@ -97,7 +97,7 @@ function contractLookup(
 function requireContract(
   lookup: (date: LisbonDate) => ReadonlyArray<Contract>,
   date: LisbonDate,
-): Effect.Effect<Contract, InvoiceCostError> {
+): Effect.Effect<Contract, CostError> {
   const covering = lookup(date);
   if (covering.length === 0) return Effect.fail(new NoContractInForceError({ at: date }));
   if (covering.length > 1) {
@@ -111,7 +111,7 @@ function requireContract(
 /**
  * Billed period of a reading (plan's layer 1 + 2). Simples skips regulated
  * resolution entirely; other options resolve through the tariff calendar,
- * collecting the versions used for invoice-discrepancy debugging (ADR 0004).
+ * collecting the versions used for cost-discrepancy debugging (ADR 0004).
  */
 function resolveBilledPeriod(
   contract: Contract,
@@ -134,7 +134,7 @@ function resolveBilledPeriod(
 // ---------------------------------------------------------------------------
 
 /**
- * Pre-tax cost of one invoice period.
+ * Pre-tax cost of an analysis range.
  *
  * Energy — per Reading: contract in force at its timestamp (Lisbon date),
  * regulated period → billed period, then `valueWh / 1000 × price`. Prices are
@@ -145,17 +145,17 @@ function resolveBilledPeriod(
  * The price step is the extension point for indexed pricing (phase 4): plug
  * the indexation formula in where `pricesPerBilledPeriod` is read today.
  */
-export const computeInvoiceCost = (
+export const computeCost = (
   readings: ReadonlyArray<CostReading>,
   contracts: ReadonlyArray<Contract>,
-  period: InvoicePeriodRange,
-): Effect.Effect<InvoiceCost, InvoiceCostError> =>
+  range: CostRange,
+): Effect.Effect<CostEstimate, CostError> =>
   Effect.gen(function* () {
-    const startMs = Date.parse(period.start);
-    const endMs = Date.parse(period.end);
+    const startMs = Date.parse(range.start);
+    const endMs = Date.parse(range.end);
     const lookup = contractLookup(contracts);
 
-    // -- Power term: one active entry per Lisbon day of the period ----------
+    // -- Power term: one active entry per Lisbon day of the range -----------
     const daysPerContract = new Map<string, { contract: Contract; days: number }>();
     for (
       let date = lisbonDateOf(new Date(startMs));
@@ -216,10 +216,10 @@ export const computeInvoiceCost = (
       [...microCostByPeriod.values()].reduce((sum, micro) => sum + micro, 0) / 10_000_000;
 
     // -- Coverage: the honesty layer ----------------------------------------
-    // Expected slots run from the period start to the end of the latest
-    // reading we hold (or the period end, when data covers it) — a running
-    // period is never penalized for its projected future, but stale data
-    // shows up as missing slots.
+    // Expected slots run from the range start to the end of the latest
+    // reading we hold (or the range end, when data covers it) — a range that
+    // extends past the data is never penalized for its missing future, but
+    // stale data shows up as missing slots.
     const slotsWithData = inRange.length;
     const estimatedReadings = inRange.filter((reading) => reading.status !== "real").length;
     let slotsExpected = 0;
@@ -232,12 +232,12 @@ export const computeInvoiceCost = (
     }
 
     return {
-      periodStart: period.start,
-      periodEnd: period.end,
+      rangeStart: range.start,
+      rangeEnd: range.end,
       totalEur: roundMoney(energyTotalEur + powerTotalEur),
       energy: { totalEur: energyTotalEur, perBilledPeriod },
       power: { totalEur: powerTotalEur, activeDaysPerContract },
       coverage: { slotsWithData, slotsExpected, estimatedReadings },
       tariffVersionIds: [...versionIds].sort(),
-    } satisfies InvoiceCost;
+    } satisfies CostEstimate;
   });

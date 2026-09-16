@@ -1,6 +1,6 @@
 // Total energy per tariff period: classifies each reading's instant (ADR 0003
 // hypothesis — timestamps mark the slot; classification uses the reading's own
-// timestamp, matching the invoice calculator in src/lib/contract/cost.ts) and
+// timestamp, matching the cost calculator in src/lib/contract/cost.ts) and
 // sums Wh. Conceptually Europe/Lisbon local time; the resolver handles season
 // and DST internally. See CONTEXT.md — "Tariff period" and "Regulated period".
 

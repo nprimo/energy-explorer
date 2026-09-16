@@ -43,6 +43,15 @@ export class ReadingsRepo extends Context.Service<
       end: string,
     ) => Effect.Effect<ReadonlyArray<ReadingRow>>;
 
+    /**
+     * First and last timestamp (UTC ISO-8601) of the cached readings for a
+     * CPE/register; both null when there is no data.
+     */
+    readonly getRangeBounds: (
+      cpe: string,
+      register: string,
+    ) => Effect.Effect<{ min: string | null; max: string | null }>;
+
     /** Upsert readings; rows are matched on (cpe, register, ts). */
     readonly upsert: (rows: ReadonlyArray<NewReading>) => Effect.Effect<number>;
 
@@ -75,6 +84,20 @@ export class ReadingsRepo extends Context.Service<
         }).pipe(
           Effect.withSpan("ReadingsRepo.getRange", {
             attributes: { cpe, register, start, end },
+          }),
+        ),
+
+      getRangeBounds: (cpe, register) =>
+        Effect.sync(() => {
+          const db = getDb();
+          const row = db.prepare(GET_RANGE_BOUNDS_SQL).get({ cpe, register }) as {
+            min: string | null;
+            max: string | null;
+          };
+          return { min: row.min ?? null, max: row.max ?? null };
+        }).pipe(
+          Effect.withSpan("ReadingsRepo.getRangeBounds", {
+            attributes: { cpe, register },
           }),
         ),
 
@@ -193,6 +216,13 @@ function nextDay(day: string): string {
   dt.setUTCDate(dt.getUTCDate() + 1);
   return dt.toISOString().slice(0, 10);
 }
+
+const GET_RANGE_BOUNDS_SQL = `
+	SELECT MIN(ts) AS min, MAX(ts) AS max
+	FROM readings
+	WHERE cpe = @cpe
+	  AND register = @register
+`;
 
 const COUNTS_BY_DATE_SQL = `
 	SELECT substr(ts, 1, 10) AS day, COUNT(*) AS count
