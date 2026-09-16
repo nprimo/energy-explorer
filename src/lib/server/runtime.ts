@@ -4,6 +4,7 @@ import { Otlp } from "effect/unstable/observability";
 import { env } from "$env/dynamic/private";
 import { ERedes } from "$lib/server/eredes";
 import { ReadingsRepo } from "$lib/server/readings";
+import { ContractsRepo } from "$lib/server/contracts";
 import { ConsumptionGateway } from "$lib/server/consumption";
 
 // ---------------------------------------------------------------------------
@@ -40,10 +41,13 @@ const ObservabilityLayer = buildObservabilityLayer();
 function buildServerLive() {
   const eredes = ERedes.withAccessToken(env.EREDES_AAT ?? "");
   const readingsRepo = ReadingsRepo.Live;
-  const gateway = ConsumptionGateway.Live.pipe(Layer.provide(Layer.merge(eredes, readingsRepo)));
+  const contractsRepo = ContractsRepo.Live;
+  const gateway = ConsumptionGateway.Live.pipe(
+    Layer.provide(Layer.mergeAll(eredes, readingsRepo, contractsRepo)),
+  );
   // Merge every service into the top-level output so the runtime environment
   // provides all of them (gateway dependencies included), not just the gateway.
-  const services = Layer.mergeAll(gateway, eredes, readingsRepo);
+  const services = Layer.mergeAll(gateway, eredes, readingsRepo, contractsRepo);
   return ObservabilityLayer ? Layer.merge(services, ObservabilityLayer) : services;
 }
 
@@ -71,7 +75,7 @@ export const runtime = ManagedRuntime.make(ServerLive, { memoMap: appMemoMap });
  * ConsumptionGateway.
  */
 export const run = <A, E>(
-  program: Effect.Effect<A, E, ConsumptionGateway | ERedes | ReadingsRepo>,
+  program: Effect.Effect<A, E, ConsumptionGateway | ERedes | ReadingsRepo | ContractsRepo>,
 ): Promise<A> => runtime.runPromise(program);
 
 // Release scoped resources on process shutdown.

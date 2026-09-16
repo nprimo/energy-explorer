@@ -48,9 +48,8 @@ _Avoid_: Average curve, mean curve (use Aggregated curve)
 
 **Partial day** — a day with fewer than 96 readings. Partial days are excluded from daily total calculations but their available slots still contribute to per-slot aggregated curves.
 
-**Invoice period** — a billing cycle that may not align with civil months (e.g., 22nd to 21st). Useful for tariff-aligned analysis. Currently future scope; civil months are used for now.
-
-_Avoid_: Billing period, billing cycle (use Invoice period)
+**Invoice period** — the billing window a contract's energy and power charges are summed over. Derived monthly from the contract's anchor date, not from civil months: half-open [start, end) in Europe/Lisbon local time (start at 00:00 local), stored and queried as true UTC. The running (current) invoice period's end is a projection, not a bill.
+_Avoid_: Billing period, billing cycle (use Invoice period; reserve "Cycle" for the counting cycle)
 
 **Calendar heatmap** — a visualization where blocks represent time periods (day or 15-min slot) with color intensity encoding a metric (e.g., total kWh). Block granularity (day vs slot) is to be prototyped.
 
@@ -77,3 +76,17 @@ _Avoid_: cadence, schedule
 
 **Season** — the legal-time half of the year a date falls in: hora legal de inverno or hora legal de verão, per Decreto-Lei n.º 17/96. Some cycles differentiate tariff periods by season; others do not.
 _Avoid_: semester, epoch (use época only when quoting the directive's ciclo semanal por épocas)
+
+## Billing domain
+
+**Contract** — an effective-dated electricity contract: option, counting cycle, contracted power, energy and power prices, and the anchor date. A contract switch is a new row whose validFrom is the switch date; history is kept so past invoices can be recomputed with the contract actually in force. Mid-period switches split naturally: each Reading is priced by the contract in force at its own timestamp, and the power term is pro-rated by active days per contract.
+_Avoid_: plan, offer, tariff version ("Tariff version" is the checked-in ERSE bracket set)
+
+**Contract anchor date** — the Lisbon calendar date the contract's billing cycle started. Every invoice period is derived from it, monthly; the day-of-month is derived, never stored (Stripe's billing_cycle_anchor model). When a month does not have the anchor day (29–31), the period starts on that month's last day, and the anchor's day returns as soon as the month has it.
+_Avoid_: billing start, cycle start
+
+**Energy price** — the €/kWh value per billed period. Stored as integers in 10⁻⁴ €/kWh (ERSE publishes four decimals), so retail prices are exact with no float drift.
+_Avoid_: tariff, rate
+
+**Indexation formula** (reserved) — how an indexed contract derives its energy price. Deliberately unspecified until the phase 4 OMIE plan; the calculator rejects indexed pricing until then.
+_Avoid_: spot formula, indexation rule
