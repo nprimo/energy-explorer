@@ -5,7 +5,7 @@
 	const links = [
 		{ route: '/', label: 'Data explorer' },
 		{ route: '/consumption', label: 'Daily average' }
-	];
+	] as const;
 </script>
 
 <nav>

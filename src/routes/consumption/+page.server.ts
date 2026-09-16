@@ -5,6 +5,7 @@ import { Effect } from "effect";
 import { run } from "$lib/server/runtime";
 import { ReadingsRepo } from "$lib/server/readings";
 import { computeDailyProfile } from "$lib/consumption/profile";
+import { computeEnergyByPeriod } from "$lib/consumption/energy-by-period";
 
 const REGISTER = "A+";
 const DAYS = 30;
@@ -34,9 +35,16 @@ export const load: PageServerLoad = async () => {
     result.rows.map((row) => ({ timestamp: row.ts, valueWh: row.valueWh })),
   );
 
+  // Total Wh per tariff period over the same window, classified with the same
+  // default counting cycle the profile chart colors with (semanal).
+  const energyByPeriod = computeEnergyByPeriod(
+    result.rows.map((row) => ({ timestamp: row.ts, valueWh: row.valueWh })),
+  );
+
   return {
     days: DAYS,
     profile,
+    energyByPeriod,
     range: {
       start: result.days[0] ?? null,
       end: result.days[result.days.length - 1] ?? null,
