@@ -171,18 +171,6 @@ function lisbonWallToUtc(
   return new Date(utcMs);
 }
 
-function parseTimestamp(s: string): Date | null {
-  // E-REDES sends wall time in Europe/Lisbon but with a trailing "Z" lie.
-  // See eredes-observation.md: March gap 00:45->02:00 and October duplicates.
-  const normalized = s.endsWith("Z") ? s.slice(0, -1) : s;
-  const withT = normalized.includes(" ") ? normalized.replace(" ", "T") : normalized;
-  const m = withT.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})$/);
-  if (!m) return null;
-  const [, Y, Mo, D, h, mi, se] = m;
-  const d = lisbonWallToUtc(+Y, +Mo, +D, +h, +mi, +se);
-  return Number.isNaN(d.getTime()) ? null : d;
-}
-
 function lastSundayOfOctober(year: number): number {
   const dow = new Date(Date.UTC(year, 9, 31)).getUTCDay(); // 9=Oct, 0=Sun
   return 31 - dow; // 25..31
@@ -215,16 +203,6 @@ function parseWallComponents(
   if (!mm) return null;
   const [, Y, Mo, D, h, mi, se] = mm;
   return { y: +Y, m: +Mo, d: +D, h: +h, mi: +mi, se: +se };
-}
-
-/** Pure conversion from the decoded raw response into the domain model. */
-function parseResponse(
-  cpe: string,
-  data: Schema.Schema.Type<typeof RawResponse>,
-  startDate: Date,
-  endDate: Date,
-): ConsumptionData {
-  return parseResponseWithDiagnostics(cpe, data, startDate, endDate).data;
 }
 
 /** Same as parseResponse but also returns warnings for unexpected duplicates. */
@@ -293,7 +271,7 @@ function parseResponseWithDiagnostics(
         }
         utcSeen.add(iso);
         const unit = (curve.meterLoadCurveUnitMeasurement ?? "").toLowerCase();
-        const valueWh = unit === "kwh" ? val * 1000 : val;
+        const valueWh = Math.round(unit === "kwh" ? val * 1000 : val);
         const status = curve.meterLoadCurveStatus ?? "unknown";
         readings.push(
           new ConsumptionReading({
