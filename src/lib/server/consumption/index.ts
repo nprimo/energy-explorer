@@ -1,4 +1,4 @@
-import { Context, Effect, Layer } from "effect";
+import { Cause, Context, Effect, Layer } from "effect";
 import { ERedes, type ERedesServiceError } from "$lib/server/eredes";
 import { NewReading, ReadingsRepo, type ReadingRow } from "$lib/server/readings";
 
@@ -130,6 +130,16 @@ export class ConsumptionGateway extends Context.Service<
                   return yield* Effect.fail(err);
                 }),
             }),
+            // DB failures (ReadingsRepo throws inside `Effect.sync`) are defects,
+            // not typed errors — they skip `catchTags` above. Log them here so the
+            // gateway log stream positively identifies both kinds:
+            //   `consumption failed`  → typed E-REDES failure (tag in the line)
+            //   `consumption defect`  → unexpected throw, e.g. SQLite (stack below)
+            Effect.tapDefect((defect) =>
+              Effect.logError(
+                `consumption defect: cpe=${cpe} range=[${start.toISOString()} → ${end.toISOString()}] ${Cause.pretty(Cause.die(defect))}`,
+              ),
+            ),
             Effect.withSpan("ConsumptionGateway.get", {
               attributes: {
                 cpe,

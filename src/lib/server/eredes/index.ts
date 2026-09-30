@@ -455,29 +455,6 @@ export class ERedes extends Context.Service<
             );
             return result;
           }).pipe(
-            Effect.catchTags({
-              ERedesAuthenticationError: (err) =>
-                Effect.gen(function* () {
-                  yield* Effect.logError(
-                    `e-redes fetch failed: cpe=${cpe} range=[${startDate.toISOString()} → ${endDate.toISOString()}] ${err._tag}: ${err.message}`,
-                  );
-                  return yield* Effect.fail(err);
-                }),
-              ERedesConnectionError: (err) =>
-                Effect.gen(function* () {
-                  yield* Effect.logError(
-                    `e-redes fetch failed: cpe=${cpe} range=[${startDate.toISOString()} → ${endDate.toISOString()}] ${err._tag}: ${err.message}`,
-                  );
-                  return yield* Effect.fail(err);
-                }),
-              ERedesError: (err) =>
-                Effect.gen(function* () {
-                  yield* Effect.logError(
-                    `e-redes fetch failed: cpe=${cpe} range=[${startDate.toISOString()} → ${endDate.toISOString()}] ${err._tag}: ${err.message}`,
-                  );
-                  return yield* Effect.fail(err);
-                }),
-            }),
             Effect.withSpan("ERedes.getConsumption", {
               attributes: {
                 cpe,
