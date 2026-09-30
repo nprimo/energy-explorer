@@ -3,8 +3,8 @@ import { error, json } from "@sveltejs/kit";
 import { env } from "$env/dynamic/private";
 import { Effect } from "effect";
 import { run } from "$lib/server/runtime";
+import { eredesFailure, orHttpError } from "$lib/server/http";
 import { ConsumptionGateway, type ConsumptionSource } from "$lib/server/consumption";
-import { ERedesAuthenticationError, ERedesConnectionError, ERedesError } from "$lib/server/eredes";
 
 function parseDateParam(value: string | null, fallback: Date): Date | null {
   if (!value) return fallback;
@@ -47,24 +47,19 @@ export const GET: RequestHandler = async ({ url }) => {
   const startIso = toIsoUtc(start);
   const endIso = toIsoUtc(end);
 
-  let result: {
+  const result: {
     rows: ReadonlyArray<{ ts: string; valueWh: number; status: string }>;
     source: ConsumptionSource;
     fetchedDays: ReadonlyArray<string>;
-  };
-  try {
-    result = await run(
+  } = await run(
+    orHttpError(
       Effect.gen(function* () {
         const gateway = yield* ConsumptionGateway;
         return yield* gateway.get(cpe, start, end, { refresh });
       }),
-    );
-  } catch (ex) {
-    if (ex instanceof ERedesAuthenticationError) throw error(401, ex.message);
-    if (ex instanceof ERedesConnectionError) throw error(502, ex.message);
-    if (ex instanceof ERedesError) throw error(502, ex.message);
-    throw ex;
-  }
+      eredesFailure,
+    ),
+  );
 
   return json({
     cpe,

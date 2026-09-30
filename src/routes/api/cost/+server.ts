@@ -3,15 +3,10 @@ import { error, json } from "@sveltejs/kit";
 import { env } from "$env/dynamic/private";
 import { Data, Effect } from "effect";
 import { run } from "$lib/server/runtime";
+import { orHttpError, type HttpFailure } from "$lib/server/http";
 import { ContractsRepo } from "$lib/server/contracts";
 import { ReadingsRepo } from "$lib/server/readings";
-import { ContractDataError } from "$lib/server/contracts";
-import {
-  IndexedPricingNotSupportedError,
-  NoContractInForceError,
-  OverlappingContractsError,
-  computeCost,
-} from "$lib/contract/cost";
+import { NoContractInForceError, computeCost } from "$lib/contract/cost";
 
 const FIFTEEN_MINUTES_MS = 15 * 60 * 1000;
 
@@ -48,58 +43,73 @@ export const GET: RequestHandler = async ({ url }) => {
     }
   }
 
-  let result;
-  try {
-    result = await run(
-      Effect.gen(function* () {
-        const contractsRepo = yield* ContractsRepo;
-        const readingsRepo = yield* ReadingsRepo;
+  const program = Effect.gen(function* () {
+    const contractsRepo = yield* ContractsRepo;
+    const readingsRepo = yield* ReadingsRepo;
 
-        const contracts = yield* contractsRepo.getForCpe(cpe);
-        if (contracts.length === 0) {
-          return yield* Effect.fail(new NoContractInForceError({ at: "all ranges" }));
-        }
+    const contracts = yield* contractsRepo.getForCpe(cpe);
+    if (contracts.length === 0) {
+      return yield* Effect.fail(new NoContractInForceError({ at: "all ranges" }));
+    }
 
-        // Range: explicit from/to, or first-to-last cached reading.
-        const range =
-          from && to
-            ? { start: from, end: to }
-            : yield* Effect.gen(function* () {
-                const bounds = yield* readingsRepo.getRangeBounds(cpe, "A+");
-                if (!bounds.min || !bounds.max) {
-                  return yield* Effect.fail(new NoCachedReadingsError({ cpe }));
-                }
-                // Extend past the last instant's slot end so [start, end) covers it.
-                const end = new Date(Date.parse(bounds.max) + FIFTEEN_MINUTES_MS).toISOString();
-                return { start: bounds.min, end } as const;
-              });
+    // Range: explicit from/to, or first-to-last cached reading.
+    const range =
+      from && to
+        ? { start: from, end: to }
+        : yield* Effect.gen(function* () {
+            const bounds = yield* readingsRepo.getRangeBounds(cpe, "A+");
+            if (!bounds.min || !bounds.max) {
+              return yield* Effect.fail(new NoCachedReadingsError({ cpe }));
+            }
+            // Extend past the last instant's slot end so [start, end) covers it.
+            const end = new Date(Date.parse(bounds.max) + FIFTEEN_MINUTES_MS).toISOString();
+            return { start: bounds.min, end } as const;
+          });
 
-        const rows = yield* readingsRepo.getRange(cpe, "A+", range.start, range.end);
-        return yield* computeCost(
-          rows.map((row) => ({ ts: row.ts, valueWh: row.valueWh, status: row.status })),
-          contracts,
-          range,
-        );
-      }),
+    const rows = yield* readingsRepo.getRange(cpe, "A+", range.start, range.end);
+    return yield* computeCost(
+      rows.map((row) => ({ ts: row.ts, valueWh: row.valueWh, status: row.status })),
+      contracts,
+      range,
     );
-  } catch (ex) {
-    if (ex instanceof NoContractInForceError) {
-      throw error(404, `No contract in force for ${cpe} (${ex.at}). Seed the contracts table.`);
-    }
-    if (ex instanceof NoCachedReadingsError) {
-      throw error(404, `No cached readings for ${cpe} — pull data first, or pass ?from=&to=.`);
-    }
-    if (ex instanceof OverlappingContractsError) {
-      throw error(500, `Overlapping contracts on ${ex.date}: ${ex.contractIds.join(", ")}`);
-    }
-    if (ex instanceof ContractDataError) {
-      throw error(500, `Invalid contract data (${ex.contractId}): ${ex.reason}`);
-    }
-    if (ex instanceof IndexedPricingNotSupportedError) {
-      throw error(501, `Indexed pricing is not supported yet (contract ${ex.contractId}).`);
-    }
-    throw ex;
-  }
+  });
+
+  // The switch must stay exhaustive over the program's error channel — the
+  // `satisfies never` default turns an unhandled error addition into a
+  // compile error instead of a runtime fallthrough.
+  const result = await run(
+    orHttpError(program, (ex): HttpFailure => {
+      switch (ex._tag) {
+        case "NoContractInForce":
+          return {
+            status: 404,
+            message: `No contract in force for ${cpe} (${ex.at}). Seed the contracts table.`,
+          };
+        case "NoCachedReadings":
+          return {
+            status: 404,
+            message: `No cached readings for ${cpe} — pull data first, or pass ?from=&to=.`,
+          };
+        case "OverlappingContracts":
+          return {
+            status: 500,
+            message: `Overlapping contracts on ${ex.date}: ${ex.contractIds.join(", ")}`,
+          };
+        case "ContractData":
+          return {
+            status: 500,
+            message: `Invalid contract data (${ex.contractId}): ${ex.reason}`,
+          };
+        case "IndexedPricingNotSupported":
+          return {
+            status: 501,
+            message: `Indexed pricing is not supported yet (contract ${ex.contractId}).`,
+          };
+        default:
+          return ex satisfies never;
+      }
+    }),
+  );
 
   return json({ cpe, register: "A+", ...result });
 };

@@ -69,13 +69,18 @@ export const runtime = ManagedRuntime.make(ServerLive, { memoMap: appMemoMap });
  * Run an Effect program against the server runtime from a non-Effect edge
  * (e.g. a SvelteKit `+server.ts` handler). Returns a Promise.
  *
+ * The error channel must already be empty: the compiler rejects any program
+ * that can still fail, so every domain error is mapped to an HTTP response
+ * (see `orHttpError` in `$lib/server/http`) before crossing the bridge.
+ * Defects propagate as thrown exceptions at the edge.
+ *
  * Accepts any program whose requirements the ServerLive layer graph builds
  * (ConsumptionGateway, ERedes, ReadingsRepo) — they are all constructed inside
  * the runtime even though the layer's declared success type is just
  * ConsumptionGateway.
  */
-export const run = <A, E>(
-  program: Effect.Effect<A, E, ConsumptionGateway | ERedes | ReadingsRepo | ContractsRepo>,
+export const run = <A>(
+  program: Effect.Effect<A, never, ConsumptionGateway | ERedes | ReadingsRepo | ContractsRepo>,
 ): Promise<A> => runtime.runPromise(program);
 
 // Release scoped resources on process shutdown.
