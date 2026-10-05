@@ -6,6 +6,15 @@
 
 	let { data }: { data: PageData } = $props();
 
+	// The oldest selectable year is the older of: the oldest cached reading, or
+	// one year ago. E-REDES can't serve data older than one year, so years older
+	// than that are only selectable when their readings are already cached.
+	const earliestYear = $derived.by(() => {
+		const oneYearAgoYear = new Date().getUTCFullYear() - 1;
+		if (!data.oldestAvailable) return oneYearAgoYear;
+		return Math.min(Number(data.oldestAvailable.slice(0, 4)), oneYearAgoYear);
+	});
+
 	let highlightDays = $state<string[]>([]);
 	let incrementalCounts = $state<Record<string, number>>({});
 	let heatmapRefreshKey = $state(0);
@@ -29,6 +38,7 @@
 
 <YearlyCalendarHeatmap
 	cpe={data.cpe}
+	earliestYear={earliestYear}
 	refreshKey={heatmapRefreshKey}
 	{highlightDays}
 	{incrementalCounts}

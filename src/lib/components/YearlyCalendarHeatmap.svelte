@@ -11,6 +11,9 @@
 		cpe: string;
 		register?: string;
 		expectedReadingsPerDay?: number;
+		/** Oldest selectable year (e.g. oldest cached data year, or last year — E-REDES
+		 *  can't fetch older). Falls back to the current and previous year when omitted. */
+		earliestYear?: number | null;
 		/** Increment to force a full re-fetch of the current year. */
 		refreshKey?: number;
 		/** Days (YYYY-MM-DD) that were just fetched from E-REDES — highlighted in UI. */
@@ -29,6 +32,7 @@
 		cpe,
 		register = "A+",
 		expectedReadingsPerDay = 96,
+		earliestYear = null,
 		refreshKey = 0,
 		highlightDays = [],
 		incrementalCounts = {},
@@ -50,7 +54,8 @@
 
 	const yearRange = $derived.by(() => {
 		const current = now.getFullYear();
-		return Array.from({ length: 5 }, (_, i) => current - i);
+		const oldest = Math.min(earliestYear ?? current - 1, current);
+		return Array.from({ length: current - oldest + 1 }, (_, i) => current - i);
 	});
 
 	const expectedCount = $derived(Math.max(1, expectedReadingsPerDay));
